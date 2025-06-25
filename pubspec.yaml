@@ -1,0 +1,45 @@
+name: kreisel_frontend
+description: "A new Flutter project."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.7.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_web_plugins:
+    sdk: flutter
+  flutter_riverpod: ^2.4.9
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.1.0
+  flutter_svg: ^2.0.10+1
+  cached_network_image: ^3.3.1
+  shimmer: ^3.0.0
+  http: ^1.4.0
+  dio: ^5.4.1
+  shared_preferences: ^2.2.0
+  intl: ^0.20.2
+  lottie: ^3.1.0
+  url_launcher: ^6.2.5
+  flutter_rating_bar: ^4.0.1
+  material_design_icons_flutter: ^7.0.7296
+  animations: ^2.0.8
+  audioplayers: ^6.5.0
+  image_picker: ^1.0.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.4
+  mockito: ^5.4.4
+  build_runner: ^2.4.6
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/music/background.mp3
+    - assets/music/click.mp3

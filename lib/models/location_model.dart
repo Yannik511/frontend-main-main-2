@@ -1,0 +1,1 @@
+enum Location { PASING, KARLSTRASSE, LOTHSTRASSE }
