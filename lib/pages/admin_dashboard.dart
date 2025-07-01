@@ -8,8 +8,125 @@ import 'package:kreisel_frontend/models/user_model.dart';
 import 'package:kreisel_frontend/pages/login_page.dart';
 import 'package:image_picker/image_picker.dart';
 
+// Interface definition for dependency injection - updated for ApiResponse pattern
+abstract class AdminServiceInterface {
+  Future<List<Item>> getAllItems(String location);
+  Future<List<Rental>> getAllRentals();
+  Future<List<User>> getAllUsers();
+  Future<Item> createItem(Item item);
+  Future<Item> updateItem(int id, Item item);
+  Future<void> deleteItem(int id);
+  Future<bool> isAdminAuthenticated();
+  Future<bool> ensureAuthenticated();
+  Future<bool> canCreateItems();
+  Future<void> logout();
+  Future<String?> uploadItemImageBytes(
+    int itemId,
+    Uint8List imageBytes,
+    String filename,
+  );
+}
+
+// Default implementation that adapts the new ApiResponse-based AdminService
+class DefaultAdminService implements AdminServiceInterface {
+  final AdminService _adminService = AdminService.instance;
+
+  @override
+  Future<List<Item>> getAllItems(String location) async {
+    final response = await _adminService.getAllItems(location);
+    if (response.isSuccess && response.data != null) {
+      return response.data!;
+    }
+    throw Exception(response.errorMessage ?? "Failed to fetch items");
+  }
+
+  @override
+  Future<List<Rental>> getAllRentals() async {
+    final response = await _adminService.getAllRentals();
+    if (response.isSuccess && response.data != null) {
+      return response.data!;
+    }
+    throw Exception(response.errorMessage ?? "Failed to fetch rentals");
+  }
+
+  @override
+  Future<List<User>> getAllUsers() async {
+    final response = await _adminService.getAllUsers();
+    if (response.isSuccess && response.data != null) {
+      return response.data!;
+    }
+    throw Exception(response.errorMessage ?? "Failed to fetch users");
+  }
+
+  @override
+  Future<Item> createItem(Item item) async {
+    final response = await _adminService.createItem(item);
+    if (response.isSuccess && response.data != null) {
+      return response.data!;
+    }
+    throw Exception(response.errorMessage ?? "Failed to create item");
+  }
+
+  @override
+  Future<Item> updateItem(int id, Item item) async {
+    final response = await _adminService.updateItem(id, item);
+    if (response.isSuccess && response.data != null) {
+      return response.data!;
+    }
+    throw Exception(response.errorMessage ?? "Failed to update item");
+  }
+
+  @override
+  Future<void> deleteItem(int id) async {
+    final response = await _adminService.deleteItem(id);
+    if (!response.isSuccess) {
+      throw Exception(response.errorMessage ?? "Failed to delete item");
+    }
+  }
+
+  @override
+  Future<bool> isAdminAuthenticated() async {
+    return _adminService.isAdminAuthenticated();
+  }
+
+  @override
+  Future<bool> ensureAuthenticated() async {
+    return _adminService.ensureAuthenticated();
+  }
+
+  @override
+  Future<bool> canCreateItems() async {
+    return _adminService.canCreateItems();
+  }
+
+  @override
+  Future<void> logout() async {
+    await _adminService.logout();
+  }
+
+  @override
+  Future<String?> uploadItemImageBytes(
+    int itemId,
+    Uint8List imageBytes,
+    String filename,
+  ) async {
+    final response = await _adminService.uploadItemImageBytes(
+      itemId,
+      imageBytes,
+      filename,
+    );
+    if (response.isSuccess) {
+      return response.data;
+    }
+    throw Exception(response.errorMessage ?? "Failed to upload image");
+  }
+}
+
 class AdminDashboard extends StatefulWidget {
-  const AdminDashboard({super.key});
+  final AdminServiceInterface adminService;
+
+  AdminDashboard({super.key, AdminServiceInterface? adminService})
+    : adminService = adminService ?? DefaultAdminService();
 
   @override
   _AdminDashboardState createState() => _AdminDashboardState();
@@ -55,7 +172,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   Future<void> _checkAuthAndLoadData() async {
     // Check if admin is still authenticated
-    final isAuthenticated = await AdminService.isAdminAuthenticated();
+    final isAuthenticated = await widget.adminService.isAdminAuthenticated();
     if (!isAuthenticated) {
       _logout();
       return;
@@ -65,12 +182,16 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   Future<void> _loadPermissions() async {
     try {
-      _canCreateItems = await AdminService.canCreateItems();
-      setState(() {}); // Update UI with new permissions
+      _canCreateItems = await widget.adminService.canCreateItems();
+      if (mounted) {
+        setState(() {}); // Update UI with new permissions
+      }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to load permissions')));
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to load permissions')));
+      }
     }
   }
 
@@ -106,7 +227,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     setState(() => _isLoading = true);
     try {
       // Ensure we're still authenticated before making requests
-      final isAuth = await AdminService.ensureAuthenticated();
+      final isAuth = await widget.adminService.ensureAuthenticated();
       if (!isAuth) {
         _logout();
         return;
@@ -114,13 +235,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
       switch (_selectedTab) {
         case 0:
-          _items = await AdminService.getAllItems(_selectedLocation);
+          _items = await widget.adminService.getAllItems(_selectedLocation);
           break;
         case 1:
-          _rentals = await AdminService.getAllRentals();
+          _rentals = await widget.adminService.getAllRentals();
           break;
         case 2:
-          _users = await AdminService.getAllUsers();
+          _users = await widget.adminService.getAllUsers();
           break;
       }
     } catch (e) {
@@ -725,14 +846,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
                               if (isCreating) {
                                 // Create item
-                                final createdItem =
-                                    await AdminService.createItem(updatedItem);
+                                final createdItem = await widget.adminService
+                                    .createItem(updatedItem);
 
                                 // Upload image if selected
                                 if (selectedImageBytes != null &&
                                     selectedImageName != null) {
-                                  final imageUrl =
-                                      await AdminService.uploadItemImageBytes(
+                                  final imageUrl = await widget.adminService
+                                      .uploadItemImageBytes(
                                         createdItem.id,
                                         selectedImageBytes!,
                                         selectedImageName!,
@@ -740,7 +861,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
                                   if (imageUrl != null) {
                                     // Update item with image URL
-                                    await AdminService.updateItem(
+                                    await widget.adminService.updateItem(
                                       createdItem.id,
                                       createdItem.copyWith(imageUrl: imageUrl),
                                     );
@@ -748,7 +869,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                 }
                               } else {
                                 // Update item
-                                await AdminService.updateItem(
+                                await widget.adminService.updateItem(
                                   item.id,
                                   updatedItem,
                                 );
@@ -756,8 +877,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                 // Upload image if selected
                                 if (selectedImageBytes != null &&
                                     selectedImageName != null) {
-                                  final imageUrl =
-                                      await AdminService.uploadItemImageBytes(
+                                  final imageUrl = await widget.adminService
+                                      .uploadItemImageBytes(
                                         item.id,
                                         selectedImageBytes!,
                                         selectedImageName!,
@@ -765,7 +886,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
                                   if (imageUrl != null) {
                                     // Update item with image URL
-                                    await AdminService.updateItem(
+                                    await widget.adminService.updateItem(
                                       item.id,
                                       updatedItem.copyWith(imageUrl: imageUrl),
                                     );
@@ -909,7 +1030,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     try {
       switch (_selectedTab) {
         case 1: // Rentals
-          _rentals = await AdminService.getAllRentals();
+          _rentals = await widget.adminService.getAllRentals();
           _rentals =
               _rentals
                   .where(
@@ -928,7 +1049,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   .toList();
           break;
         case 2: // Users
-          _users = await AdminService.getAllUsers();
+          _users = await widget.adminService.getAllUsers();
           _users =
               _users
                   .where(
@@ -957,7 +1078,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   void _logout() async {
     try {
-      await AdminService.logout();
+      await widget.adminService.logout();
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
           CupertinoPageRoute(builder: (context) => LoginPage()),
@@ -994,7 +1115,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 onPressed: () async {
                   Navigator.pop(context);
                   try {
-                    await AdminService.deleteItem(id);
+                    await widget.adminService.deleteItem(id);
                     _loadData();
                   } catch (e) {
                     print('DEBUG: Delete item error: $e');

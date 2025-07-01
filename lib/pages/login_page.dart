@@ -208,9 +208,10 @@ class _LoginPageState extends State<LoginPage> {
 
       // Check if this is an admin email
       if (email.startsWith('admin')) {
+        final adminService = AdminService();
         if (_isRegistering) {
           // Admin registration
-          await AdminService.register(
+          await adminService.register(
             _fullNameController.text.trim(),
             email,
             password,
@@ -218,7 +219,7 @@ class _LoginPageState extends State<LoginPage> {
           print('DEBUG: Admin registration successful');
         } else {
           // Admin login
-          await AdminService.login(email, password);
+          await adminService.login(email, password);
           print('DEBUG: Admin login successful');
         }
 

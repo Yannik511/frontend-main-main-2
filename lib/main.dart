@@ -1,17 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:kreisel_frontend/pages/login_page.dart';
-import 'package:kreisel_frontend/services/admin_service.dart';
+
+class MockNavigatorObserver extends NavigatorObserver {
+  List<Route<dynamic>> pushedRoutes = [];
+
+  @override
+  void didPush(Route route, Route? previousRoute) {
+    pushedRoutes.add(route);
+    super.didPush(route, previousRoute);
+  }
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Initialize admin service
-  if (await AdminService.hasAdminToken()) {
-    if (!await AdminService.verifyAdminAccess()) {
-      await AdminService.logout();
-    }
-  }
-
   runApp(KreiselApp());
 }
 

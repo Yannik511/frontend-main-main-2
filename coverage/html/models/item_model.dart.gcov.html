@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2025-06-25 10:05:33</td>
+            <td class="headerValue">2025-07-01 15:23:14</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">-</td>
@@ -78,7 +78,7 @@
 <span id="L16"><span class="lineNum">      16</span>              :   final String? subcategory;</span>
 <span id="L17"><span class="lineNum">      17</span>              :   final String? zustand;</span>
 <span id="L18"><span class="lineNum">      18</span>              : </span>
-<span id="L19"><span class="lineNum">      19</span> <span class="tlaGNC">           4 :   Item({</span></span>
+<span id="L19"><span class="lineNum">      19</span> <span class="tlaGNC">          10 :   Item({</span></span>
 <span id="L20"><span class="lineNum">      20</span>              :     required this.id,</span>
 <span id="L21"><span class="lineNum">      21</span>              :     required this.name,</span>
 <span id="L22"><span class="lineNum">      22</span>              :     this.size,</span>
@@ -95,28 +95,28 @@
 <span id="L33"><span class="lineNum">      33</span>              :     this.zustand,</span>
 <span id="L34"><span class="lineNum">      34</span>              :   });</span>
 <span id="L35"><span class="lineNum">      35</span>              : </span>
-<span id="L36"><span class="lineNum">      36</span> <span class="tlaGNC">           3 :   factory Item.fromJson(Map&lt;String, dynamic&gt; json) {</span></span>
+<span id="L36"><span class="lineNum">      36</span> <span class="tlaGNC">           5 :   factory Item.fromJson(Map&lt;String, dynamic&gt; json) {</span></span>
 <span id="L37"><span class="lineNum">      37</span>              :     // Process image URL to ensure it's complete</span>
 <span id="L38"><span class="lineNum">      38</span>              :     String? processedImageUrl;</span>
-<span id="L39"><span class="lineNum">      39</span> <span class="tlaGNC">           3 :     if (json['imageUrl'] != null) {</span></span>
-<span id="L40"><span class="lineNum">      40</span> <span class="tlaGNC">           4 :       processedImageUrl = ApiService.getFullImageUrl(json['imageUrl']);</span></span>
+<span id="L39"><span class="lineNum">      39</span> <span class="tlaGNC">           5 :     if (json['imageUrl'] != null) {</span></span>
+<span id="L40"><span class="lineNum">      40</span> <span class="tlaGNC">           6 :       processedImageUrl = ApiService.getFullImageUrl(json['imageUrl']);</span></span>
 <span id="L41"><span class="lineNum">      41</span>              :     }</span>
 <span id="L42"><span class="lineNum">      42</span>              : </span>
-<span id="L43"><span class="lineNum">      43</span> <span class="tlaGNC">           3 :     return Item(</span></span>
-<span id="L44"><span class="lineNum">      44</span> <span class="tlaGNC">           3 :       id: json['id'] ?? 0,</span></span>
-<span id="L45"><span class="lineNum">      45</span> <span class="tlaGNC">           3 :       name: json['name'] ?? '',</span></span>
-<span id="L46"><span class="lineNum">      46</span> <span class="tlaGNC">           3 :       size: json['size'],</span></span>
-<span id="L47"><span class="lineNum">      47</span> <span class="tlaGNC">           3 :       available: json['available'] ?? true,</span></span>
-<span id="L48"><span class="lineNum">      48</span> <span class="tlaGNC">           3 :       description: json['description'],</span></span>
-<span id="L49"><span class="lineNum">      49</span> <span class="tlaGNC">           3 :       brand: json['brand'],</span></span>
+<span id="L43"><span class="lineNum">      43</span> <span class="tlaGNC">           5 :     return Item(</span></span>
+<span id="L44"><span class="lineNum">      44</span> <span class="tlaGNC">           5 :       id: json['id'] ?? 0,</span></span>
+<span id="L45"><span class="lineNum">      45</span> <span class="tlaGNC">           5 :       name: json['name'] ?? '',</span></span>
+<span id="L46"><span class="lineNum">      46</span> <span class="tlaGNC">           5 :       size: json['size'],</span></span>
+<span id="L47"><span class="lineNum">      47</span> <span class="tlaGNC">           5 :       available: json['available'] ?? true,</span></span>
+<span id="L48"><span class="lineNum">      48</span> <span class="tlaGNC">           5 :       description: json['description'],</span></span>
+<span id="L49"><span class="lineNum">      49</span> <span class="tlaGNC">           5 :       brand: json['brand'],</span></span>
 <span id="L50"><span class="lineNum">      50</span>              :       imageUrl: processedImageUrl,</span>
-<span id="L51"><span class="lineNum">      51</span> <span class="tlaGNC">           5 :       averageRating: json['averageRating']?.toDouble() ?? 0.0,</span></span>
-<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC">           3 :       reviewCount: json['reviewCount'] ?? 0,</span></span>
-<span id="L53"><span class="lineNum">      53</span> <span class="tlaGNC">           3 :       location: json['location'],</span></span>
-<span id="L54"><span class="lineNum">      54</span> <span class="tlaGNC">           3 :       gender: json['gender'],</span></span>
-<span id="L55"><span class="lineNum">      55</span> <span class="tlaGNC">           3 :       category: json['category'],</span></span>
-<span id="L56"><span class="lineNum">      56</span> <span class="tlaGNC">           3 :       subcategory: json['subcategory'],</span></span>
-<span id="L57"><span class="lineNum">      57</span> <span class="tlaGNC">           3 :       zustand: json['zustand'],</span></span>
+<span id="L51"><span class="lineNum">      51</span> <span class="tlaGNC">           7 :       averageRating: json['averageRating']?.toDouble() ?? 0.0,</span></span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC">           5 :       reviewCount: json['reviewCount'] ?? 0,</span></span>
+<span id="L53"><span class="lineNum">      53</span> <span class="tlaGNC">           5 :       location: json['location'],</span></span>
+<span id="L54"><span class="lineNum">      54</span> <span class="tlaGNC">           5 :       gender: json['gender'],</span></span>
+<span id="L55"><span class="lineNum">      55</span> <span class="tlaGNC">           5 :       category: json['category'],</span></span>
+<span id="L56"><span class="lineNum">      56</span> <span class="tlaGNC">           5 :       subcategory: json['subcategory'],</span></span>
+<span id="L57"><span class="lineNum">      57</span> <span class="tlaGNC">           5 :       zustand: json['zustand'],</span></span>
 <span id="L58"><span class="lineNum">      58</span>              :     );</span>
 <span id="L59"><span class="lineNum">      59</span>              :   }</span>
 <span id="L60"><span class="lineNum">      60</span>              : </span>

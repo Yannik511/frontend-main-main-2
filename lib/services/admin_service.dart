@@ -1,6 +1,5 @@
 import 'dart:convert';
-import 'dart:io'; // Add this import for File class
-import 'dart:typed_data'; // Add this import for Uint8List
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,55 +7,409 @@ import 'package:kreisel_frontend/models/item_model.dart';
 import 'package:kreisel_frontend/models/rental_model.dart';
 import 'package:kreisel_frontend/models/user_model.dart';
 
-class AdminService {
-  static const String baseUrl = 'http://localhost:8080/api';
+// Network client abstraction
+abstract class HttpClient {
+  Future<http.Response> get(Uri url, {Map<String, String>? headers});
+  Future<http.Response> post(
+    Uri url, {
+    Map<String, String>? headers,
+    Object? body,
+  });
+  Future<http.Response> put(
+    Uri url, {
+    Map<String, String>? headers,
+    Object? body,
+  });
+  Future<http.Response> delete(Uri url, {Map<String, String>? headers});
+  Future<http.StreamedResponse> send(http.MultipartRequest request);
+}
+
+// Default HTTP implementation
+class DefaultHttpClient implements HttpClient {
+  final http.Client _client = http.Client();
+  final Duration _timeout;
+
+  DefaultHttpClient({Duration timeout = const Duration(seconds: 15)})
+    : _timeout = timeout;
+
+  @override
+  Future<http.Response> get(Uri url, {Map<String, String>? headers}) {
+    return _client.get(url, headers: headers).timeout(_timeout);
+  }
+
+  @override
+  Future<http.Response> post(
+    Uri url, {
+    Map<String, String>? headers,
+    Object? body,
+  }) {
+    return _client.post(url, headers: headers, body: body).timeout(_timeout);
+  }
+
+  @override
+  Future<http.Response> put(
+    Uri url, {
+    Map<String, String>? headers,
+    Object? body,
+  }) {
+    return _client.put(url, headers: headers, body: body).timeout(_timeout);
+  }
+
+  @override
+  Future<http.Response> delete(Uri url, {Map<String, String>? headers}) {
+    return _client.delete(url, headers: headers).timeout(_timeout);
+  }
+
+  @override
+  Future<http.StreamedResponse> send(http.MultipartRequest request) {
+    return _client.send(request).timeout(_timeout);
+  }
+}
+
+// Token storage abstraction
+abstract class TokenStorage {
+  Future<void> saveToken(String token);
+  Future<String?> getToken();
+  Future<void> clearToken();
+}
+
+// SharedPreferences implementation of token storage
+class SharedPrefsTokenStorage implements TokenStorage {
   static const String tokenKey = 'admin_token';
 
-  // User Management with better error handling
-  static Future<List<User>> getAllUsers() async {
+  @override
+  Future<void> saveToken(String token) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(tokenKey, token);
+  }
+
+  @override
+  Future<String?> getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(tokenKey);
+  }
+
+  @override
+  Future<void> clearToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(tokenKey);
+  }
+}
+
+// Standardized API response
+class ApiResponse<T> {
+  final T? data;
+  final bool success;
+  final String? errorMessage;
+  final int? statusCode;
+
+  ApiResponse({
+    this.data,
+    this.success = true,
+    this.errorMessage,
+    this.statusCode,
+  });
+
+  factory ApiResponse.success(T data, {int? statusCode}) {
+    return ApiResponse(data: data, success: true, statusCode: statusCode);
+  }
+
+  factory ApiResponse.error(String message, {int? statusCode}) {
+    return ApiResponse(
+      success: false,
+      errorMessage: message,
+      statusCode: statusCode,
+    );
+  }
+
+  bool get isSuccess => success;
+  bool get isError => !success;
+}
+
+// Admin service interface
+abstract class AdminServiceInterface {
+  Future<ApiResponse<List<Item>>> getAllItems(String location);
+  Future<ApiResponse<List<Rental>>> getAllRentals();
+  Future<ApiResponse<List<User>>> getAllUsers();
+  Future<ApiResponse<Item>> createItem(Item item);
+  Future<ApiResponse<Item>> updateItem(int id, Item item);
+  Future<ApiResponse<void>> deleteItem(int id);
+  Future<bool> isAdminAuthenticated();
+  Future<bool> ensureAuthenticated();
+  Future<bool> canCreateItems();
+  Future<void> logout();
+  Future<ApiResponse<String?>> uploadItemImageBytes(
+    int itemId,
+    Uint8List imageBytes,
+    String filename,
+  );
+  Future<ApiResponse<Map<String, dynamic>>> login(
+    String email,
+    String password,
+  );
+  Future<ApiResponse<Map<String, dynamic>>> register(
+    String fullName,
+    String email,
+    String password,
+  );
+}
+
+// Main AdminService implementation
+class AdminService implements AdminServiceInterface {
+  // Singleton implementation
+  static AdminService? _instance;
+
+  static AdminService get instance {
+    _instance ??= AdminService();
+    return _instance!;
+  }
+
+  // For testing - allows injecting a mock
+  @visibleForTesting
+  static void setInstance(AdminService mockService) {
+    _instance = mockService;
+  }
+
+  // Reset the singleton (useful for testing)
+  @visibleForTesting
+  static void resetInstance() {
+    _instance = null;
+  }
+
+  // Dependencies
+  final HttpClient httpClient;
+  final TokenStorage tokenStorage;
+  final String baseUrl;
+  bool _debugMode;
+
+  // Constructor with dependency injection
+  AdminService({
+    HttpClient? httpClient,
+    TokenStorage? tokenStorage,
+    String? baseUrl,
+    bool debugMode = false,
+  }) : httpClient = httpClient ?? DefaultHttpClient(),
+       tokenStorage = tokenStorage ?? SharedPrefsTokenStorage(),
+       baseUrl = baseUrl ?? 'http://localhost:8080/api',
+       _debugMode = debugMode;
+
+  // Enable/disable debug mode
+  void setDebugMode(bool enabled) {
+    _debugMode = enabled;
+  }
+
+  // Logging helper
+  void _log(String message) {
+    if (_debugMode) {
+      print('AdminService: $message');
+    }
+  }
+
+  // MARK: - Authentication Methods
+
+  @override
+  Future<ApiResponse<Map<String, dynamic>>> login(
+    String email,
+    String password,
+  ) async {
     try {
-      final response = await http.get(
+      _log('Starting admin login for: $email');
+      await tokenStorage.clearToken(); // Clear existing tokens
+
+      final response = await httpClient.post(
+        Uri.parse('$baseUrl/auth/login'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': email, 'password': password}),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        // Check if user has ADMIN role
+        if (data['role'] != 'ADMIN') {
+          return ApiResponse.error('Keine Admin-Berechtigung', statusCode: 403);
+        }
+
+        // Save token
+        final token = data['token'];
+        if (token == null) {
+          return ApiResponse.error(
+            'Kein Token erhalten',
+            statusCode: response.statusCode,
+          );
+        }
+
+        await tokenStorage.saveToken(token);
+        _log('Admin login successful');
+        return ApiResponse.success(data, statusCode: response.statusCode);
+      }
+
+      return _handleErrorResponse(response);
+    } catch (e) {
+      _log('Admin login error: $e');
+      await tokenStorage.clearToken();
+      return ApiResponse.error('Verbindungsfehler: $e');
+    }
+  }
+
+  @override
+  Future<ApiResponse<Map<String, dynamic>>> register(
+    String fullName,
+    String email,
+    String password,
+  ) async {
+    try {
+      _log('Starting admin registration for: $email');
+
+      if (!email.startsWith('admin')) {
+        return ApiResponse.error('Admin-Email muss mit "admin" beginnen');
+      }
+
+      final response = await httpClient.post(
+        Uri.parse('$baseUrl/auth/register'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'fullName': fullName,
+          'email': email,
+          'password': password,
+        }),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = jsonDecode(response.body);
+
+        // Verify admin role
+        if (data['role'] != 'ADMIN') {
+          return ApiResponse.error(
+            'Registrierung fehlgeschlagen - Keine Admin-Rolle',
+            statusCode: 403,
+          );
+        }
+
+        // Save token
+        final token = data['token'];
+        if (token == null) {
+          return ApiResponse.error(
+            'Kein Token erhalten',
+            statusCode: response.statusCode,
+          );
+        }
+
+        await tokenStorage.saveToken(token);
+        return ApiResponse.success(data, statusCode: response.statusCode);
+      }
+
+      return _handleErrorResponse(response);
+    } catch (e) {
+      _log('Admin registration error: $e');
+      await logout(); // Clear token on error
+      return ApiResponse.error('Verbindungsfehler: $e');
+    }
+  }
+
+  @override
+  Future<void> logout() async {
+    await tokenStorage.clearToken();
+    _log('Cleared admin token');
+  }
+
+  @override
+  Future<bool> isAdminAuthenticated() async {
+    try {
+      final token = await tokenStorage.getToken();
+      if (token == null || token.isEmpty) {
+        return false;
+      }
+
+      // Test token validity by making a request
+      final response = await httpClient.get(
         Uri.parse('$baseUrl/users'),
         headers: await _getAdminHeaders(),
       );
 
-      print('DEBUG: Get users response: ${response.statusCode}');
-      print('DEBUG: Get users body: "${response.body}"');
+      return response.statusCode == 200;
+    } catch (e) {
+      _log('Authentication check error: $e');
+      return false;
+    }
+  }
+
+  @override
+  Future<bool> ensureAuthenticated() async {
+    final isAuth = await isAdminAuthenticated();
+    if (!isAuth) {
+      await logout();
+      return false;
+    }
+    return true;
+  }
+
+  @override
+  Future<bool> canCreateItems() async {
+    try {
+      final token = await tokenStorage.getToken();
+      return token != null && token.isNotEmpty;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // MARK: - User Management Methods
+
+  @override
+  Future<ApiResponse<List<User>>> getAllUsers() async {
+    try {
+      final response = await httpClient.get(
+        Uri.parse('$baseUrl/users'),
+        headers: await _getAdminHeaders(),
+      );
+
+      _log('Get users response: ${response.statusCode}');
 
       if (response.statusCode == 200) {
         final responseBody = response.body.trim();
         if (responseBody.isEmpty) {
-          return []; // Return empty list for empty response
+          return ApiResponse.success([]);
         }
 
         final List<dynamic> data = jsonDecode(responseBody);
-        return data.map((json) => User.fromJson(json)).toList();
+        final users = data.map((json) => User.fromJson(json)).toList();
+        return ApiResponse.success(users, statusCode: response.statusCode);
       }
 
-      throw Exception(_handleError(response));
+      return _handleErrorResponse(response);
     } catch (e) {
-      print('DEBUG: Error getting users: $e');
-      rethrow;
+      _log('Error getting users: $e');
+      return ApiResponse.error('Fehler beim Laden der Benutzer: $e');
     }
   }
 
-  static Future<User> getUserById(int userId) async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/users/$userId'),
-      headers: await _getAdminHeaders(),
-    );
-
-    if (response.statusCode == 200) {
-      return User.fromJson(jsonDecode(response.body));
-    }
-    throw Exception(_handleError(response));
-  }
-
-  // Rental Management
-  // Get all rentals with user details
-  static Future<List<Rental>> getAllRentals() async {
+  Future<ApiResponse<User>> getUserById(int userId) async {
     try {
-      final response = await http.get(
+      final response = await httpClient.get(
+        Uri.parse('$baseUrl/users/$userId'),
+        headers: await _getAdminHeaders(),
+      );
+
+      if (response.statusCode == 200) {
+        return ApiResponse.success(
+          User.fromJson(jsonDecode(response.body)),
+          statusCode: response.statusCode,
+        );
+      }
+
+      return _handleErrorResponse(response);
+    } catch (e) {
+      return ApiResponse.error('Fehler beim Laden des Benutzers: $e');
+    }
+  }
+
+  // MARK: - Rental Management Methods
+
+  @override
+  Future<ApiResponse<List<Rental>>> getAllRentals() async {
+    try {
+      final response = await httpClient.get(
         Uri.parse('$baseUrl/rentals'),
         headers: await _getAdminHeaders(),
       );
@@ -64,7 +417,7 @@ class AdminService {
       if (response.statusCode == 200) {
         final responseBody = response.body.trim();
         if (responseBody.isEmpty) {
-          return [];
+          return ApiResponse.success([]);
         }
 
         final List<dynamic> data = jsonDecode(responseBody);
@@ -73,104 +426,116 @@ class AdminService {
         for (var rentalJson in data) {
           if (rentalJson['user'] == null && rentalJson['userId'] != null) {
             try {
-              final userResponse = await http.get(
+              final userResponse = await httpClient.get(
                 Uri.parse('$baseUrl/users/${rentalJson['userId']}'),
                 headers: await _getAdminHeaders(),
               );
 
               if (userResponse.statusCode == 200) {
                 final userData = jsonDecode(userResponse.body);
-                print('DEBUG: Got user data for rental: $userData');
+                _log('Got user data for rental: $userData');
                 // Add user data to rental JSON
                 rentalJson['user'] = userData;
               }
             } catch (e) {
-              print('DEBUG: Error fetching user ${rentalJson['userId']}: $e');
+              _log('Error fetching user ${rentalJson['userId']}: $e');
             }
           }
 
           rentals.add(Rental.fromJson(rentalJson));
         }
 
-        print('DEBUG: Created ${rentals.length} rental objects');
-        return rentals;
+        return ApiResponse.success(rentals, statusCode: response.statusCode);
       }
 
-      throw Exception(_handleError(response));
+      return _handleErrorResponse(response);
     } catch (e) {
-      print('DEBUG: Error getting rentals: $e');
-      rethrow;
+      _log('Error getting rentals: $e');
+      return ApiResponse.error('Fehler beim Laden der Ausleihen: $e');
     }
   }
 
-  static Future<Rental> getRentalById(int rentalId) async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/rentals/$rentalId'),
-      headers: await _getAdminHeaders(),
-    );
-
-    if (response.statusCode == 200) {
-      return Rental.fromJson(jsonDecode(response.body));
-    }
-    throw Exception(_handleError(response));
-  }
-
-  // Item Management
-  static Future<List<Item>> getAllItems(String location) async {
+  Future<ApiResponse<Rental>> getRentalById(int rentalId) async {
     try {
-      print('DEBUG: Fetching items for location: $location');
-      final headers = await _getAdminHeaders();
+      final response = await httpClient.get(
+        Uri.parse('$baseUrl/rentals/$rentalId'),
+        headers: await _getAdminHeaders(),
+      );
+
+      if (response.statusCode == 200) {
+        return ApiResponse.success(
+          Rental.fromJson(jsonDecode(response.body)),
+          statusCode: response.statusCode,
+        );
+      }
+
+      return _handleErrorResponse(response);
+    } catch (e) {
+      return ApiResponse.error('Fehler beim Laden der Ausleihe: $e');
+    }
+  }
+
+  // MARK: - Item Management Methods
+
+  @override
+  Future<ApiResponse<List<Item>>> getAllItems(String location) async {
+    try {
+      _log('Fetching items for location: $location');
 
       final queryParams = {'location': location};
       final uri = Uri.parse(
         '$baseUrl/items',
       ).replace(queryParameters: queryParams);
-      print('DEBUG: Request URI: $uri');
 
-      final response = await http.get(uri, headers: headers);
-
-      print('DEBUG: Response status: ${response.statusCode}');
-      print('DEBUG: Response body: "${response.body}"');
+      final response = await httpClient.get(
+        uri,
+        headers: await _getAdminHeaders(),
+      );
 
       if (response.statusCode == 200) {
         final responseBody = response.body.trim();
         if (responseBody.isEmpty) {
-          return [];
+          return ApiResponse.success([]);
         }
 
         final List<dynamic> data = jsonDecode(responseBody);
-        return data.map((json) => Item.fromJson(json)).toList();
+        final items = data.map((json) => Item.fromJson(json)).toList();
+        return ApiResponse.success(items, statusCode: response.statusCode);
       }
 
-      throw Exception(_handleError(response));
+      return _handleErrorResponse(response);
     } catch (e) {
-      print('DEBUG: Error loading items: $e');
-      rethrow;
+      _log('Error loading items: $e');
+      return ApiResponse.error('Fehler beim Laden der Gegenstände: $e');
     }
   }
 
-  static Future<Item> getItemById(int id) async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/items/$id'),
-      headers: await _getAdminHeaders(),
-    );
-
-    if (response.statusCode == 200) {
-      return Item.fromJson(jsonDecode(response.body));
-    }
-    throw Exception(_handleError(response));
-  }
-
-  static Future<Item> createItem(Item item) async {
+  Future<ApiResponse<Item>> getItemById(int id) async {
     try {
-      print('DEBUG: Starting item creation');
+      final response = await httpClient.get(
+        Uri.parse('$baseUrl/items/$id'),
+        headers: await _getAdminHeaders(),
+      );
 
-      // Use the same headers that work for getting users
+      if (response.statusCode == 200) {
+        return ApiResponse.success(
+          Item.fromJson(jsonDecode(response.body)),
+          statusCode: response.statusCode,
+        );
+      }
+
+      return _handleErrorResponse(response);
+    } catch (e) {
+      return ApiResponse.error('Fehler beim Laden des Gegenstands: $e');
+    }
+  }
+
+  @override
+  Future<ApiResponse<Item>> createItem(Item item) async {
+    try {
       final headers = await _getAdminHeaders();
 
-      print('DEBUG: Using headers: $headers');
-
-      final response = await http.post(
+      final response = await httpClient.post(
         Uri.parse('$baseUrl/items'),
         headers: headers,
         body: jsonEncode({
@@ -187,36 +552,40 @@ class AdminService {
         }),
       );
 
-      print('DEBUG: Create item response status: ${response.statusCode}');
-      print('DEBUG: Create item response body: "${response.body}"');
-
       if (response.statusCode == 200 || response.statusCode == 201) {
         final responseBody = response.body.trim();
         if (responseBody.isEmpty) {
-          throw Exception('Server hat leere Antwort gesendet');
+          return ApiResponse.error('Server hat leere Antwort gesendet');
         }
-        return Item.fromJson(jsonDecode(responseBody));
-      }
-
-      // Simple error handling
-      if (response.statusCode == 401 || response.statusCode == 403) {
-        throw Exception(
-          'Keine ausreichenden Berechtigungen für diese Operation',
+        return ApiResponse.success(
+          Item.fromJson(jsonDecode(responseBody)),
+          statusCode: response.statusCode,
         );
       }
 
-      throw Exception(_handleError(response));
+      // Special error handling
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        return ApiResponse.error(
+          'Keine ausreichenden Berechtigungen für diese Operation',
+          statusCode: response.statusCode,
+        );
+      }
+
+      return _handleErrorResponse(response);
     } catch (e) {
-      print('DEBUG: Create item error: $e');
-      rethrow;
+      _log('Create item error: $e');
+      return ApiResponse.error('Fehler beim Erstellen des Gegenstands: $e');
     }
   }
 
-  static Future<Item> updateItem(int id, Item item) async {
+  @override
+  Future<ApiResponse<Item>> updateItem(int id, Item item) async {
     try {
-      final token = await _getAdminToken();
+      final token = await tokenStorage.getToken();
       if (token == null || token.isEmpty) {
-        throw Exception('Kein Admin-Token verfügbar. Bitte neu anmelden.');
+        return ApiResponse.error(
+          'Kein Admin-Token verfügbar. Bitte neu anmelden.',
+        );
       }
 
       final headers = {
@@ -225,7 +594,7 @@ class AdminService {
         'Accept': 'application/json',
       };
 
-      final response = await http.put(
+      final response = await httpClient.put(
         Uri.parse('$baseUrl/items/$id'),
         headers: headers,
         body: jsonEncode({
@@ -242,180 +611,129 @@ class AdminService {
         }),
       );
 
-      print('Update Item Response: ${response.statusCode}');
-      print('Update Item Body: "${response.body}"');
-
       if (response.statusCode == 200) {
         final responseBody = response.body.trim();
         if (responseBody.isEmpty) {
-          throw Exception('Server hat leere Antwort gesendet');
+          return ApiResponse.error('Server hat leere Antwort gesendet');
         }
-        return Item.fromJson(jsonDecode(responseBody));
+        return ApiResponse.success(
+          Item.fromJson(jsonDecode(responseBody)),
+          statusCode: response.statusCode,
+        );
       }
 
       if (response.statusCode == 401) {
         await logout();
-        throw Exception('Token abgelaufen. Bitte neu anmelden.');
+        return ApiResponse.error(
+          'Token abgelaufen. Bitte neu anmelden.',
+          statusCode: response.statusCode,
+        );
       }
 
       if (response.statusCode == 403) {
-        if (response.body.trim().isEmpty) {
-          throw Exception(
-            'Server-Konfigurationsproblem: Admin-Berechtigung wird nicht erkannt',
-          );
-        }
-        throw Exception('Keine Admin-Berechtigung. Token ist ungültig.');
+        return ApiResponse.error(
+          'Keine Admin-Berechtigung. Token ist ungültig.',
+          statusCode: response.statusCode,
+        );
       }
 
-      throw Exception(_handleError(response));
+      return _handleErrorResponse(response);
     } catch (e) {
-      print('Update Item Error: $e');
-      rethrow;
+      _log('Update Item Error: $e');
+      return ApiResponse.error('Fehler beim Aktualisieren des Gegenstands: $e');
     }
   }
 
-  static Future<void> deleteItem(int id) async {
-    final response = await http.delete(
-      Uri.parse('$baseUrl/items/$id'),
-      headers: await _getAdminHeaders(),
-    );
-
-    if (response.statusCode == 401) {
-      await logout();
-      throw Exception('Token abgelaufen. Bitte neu anmelden.');
-    }
-
-    if (response.statusCode == 403 && response.body.trim().isEmpty) {
-      throw Exception(
-        'Server-Konfigurationsproblem: Admin-Berechtigung wird nicht erkannt',
+  @override
+  Future<ApiResponse<void>> deleteItem(int id) async {
+    try {
+      final response = await httpClient.delete(
+        Uri.parse('$baseUrl/items/$id'),
+        headers: await _getAdminHeaders(),
       );
-    }
 
-    if (response.statusCode != 200 && response.statusCode != 204) {
-      throw Exception(_handleError(response));
+      if (response.statusCode == 200 || response.statusCode == 204) {
+        return ApiResponse.success(null, statusCode: response.statusCode);
+      }
+
+      if (response.statusCode == 401) {
+        await logout();
+        return ApiResponse.error(
+          'Token abgelaufen. Bitte neu anmelden.',
+          statusCode: response.statusCode,
+        );
+      }
+
+      if (response.statusCode == 403) {
+        return ApiResponse.error(
+          'Keine Admin-Berechtigung. Token ist ungültig.',
+          statusCode: response.statusCode,
+        );
+      }
+
+      return _handleErrorResponse(response);
+    } catch (e) {
+      return ApiResponse.error('Fehler beim Löschen des Gegenstands: $e');
     }
   }
 
-  static Future<void> logout() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(tokenKey);
-    print('DEBUG: Cleared admin token');
-  }
-
-  static Future<bool> ensureAuthenticated() async {
-    final isAuth = await isAdminAuthenticated();
-    if (!isAuth) {
-      await logout();
-      return false;
-    }
-    return true;
-  }
-
-  static Future<Map<String, dynamic>> login(
-    String email,
-    String password,
+  @override
+  Future<ApiResponse<String?>> uploadItemImageBytes(
+    int itemId,
+    Uint8List imageBytes,
+    String filename,
   ) async {
     try {
-      print('DEBUG: Starting admin login for: $email');
-      await logout(); // Clear existing tokens
-
-      final response = await http.post(
-        Uri.parse('$baseUrl/auth/login'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'email': email, 'password': password}),
-      );
-
-      print('DEBUG: Login response status: ${response.statusCode}');
-      print('DEBUG: Login response body: ${response.body}');
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-
-        // Simply check if user has ADMIN role
-        if (data['role'] != 'ADMIN') {
-          throw Exception('Keine Admin-Berechtigung');
-        }
-
-        // Save token
-        final token = data['token'];
-        if (token == null) throw Exception('Kein Token erhalten');
-        await saveAdminToken(token);
-
-        print('DEBUG: Admin login successful');
-        return data;
+      final token = await tokenStorage.getToken();
+      if (token == null) {
+        return ApiResponse.error('Nicht authentifiziert');
       }
 
-      throw Exception(_handleError(response));
+      // Create upload URL
+      var uploadUrl = Uri.parse('$baseUrl/items/$itemId/image');
+
+      // Create a multipart request
+      var request = http.MultipartRequest('POST', uploadUrl);
+
+      // Add authorization
+      request.headers['Authorization'] = 'Bearer $token';
+
+      // Add the file bytes to the request
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'image',
+          imageBytes,
+          filename: filename,
+          contentType: _getContentType(filename),
+        ),
+      );
+
+      // Send the request
+      var streamedResponse = await httpClient.send(request);
+      var response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        final jsonData = json.decode(response.body);
+        return ApiResponse.success(
+          jsonData['imageUrl'],
+          statusCode: response.statusCode,
+        );
+      } else {
+        return ApiResponse.error(
+          'Fehler beim Hochladen des Bildes: ${response.statusCode} ${response.reasonPhrase}',
+          statusCode: response.statusCode,
+        );
+      }
     } catch (e) {
-      print('DEBUG: Admin login error: $e');
-      await logout();
-      rethrow;
+      _log('Image upload failed: $e');
+      return ApiResponse.error('Fehler beim Hochladen des Bildes: $e');
     }
   }
 
-  static Future<Map<String, dynamic>> register(
-    String fullName,
-    String email,
-    String password,
-  ) async {
-    try {
-      print('DEBUG: Starting admin registration for: $email');
+  // MARK: - Helper Methods
 
-      if (!email.startsWith('admin')) {
-        throw Exception('Admin-Email muss mit "admin" beginnen');
-      }
-
-      final response = await http.post(
-        Uri.parse('$baseUrl/auth/register'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'fullName': fullName,
-          'email': email,
-          'password': password,
-        }),
-      );
-
-      print('DEBUG: Register response status: ${response.statusCode}');
-      print('DEBUG: Register response body: ${response.body}');
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-
-        // Verify admin role
-        if (data['role'] != 'ADMIN') {
-          throw Exception('Registrierung fehlgeschlagen - Keine Admin-Rolle');
-        }
-
-        // Save token
-        final token = data['token'];
-        if (token == null) throw Exception('Kein Token erhalten');
-        await saveAdminToken(token);
-
-        print('DEBUG: Admin registration successful');
-        return data;
-      }
-
-      throw Exception(_handleError(response));
-    } catch (e) {
-      print('DEBUG: Admin registration error: $e');
-      await logout(); // Clear token on error
-      rethrow;
-    }
-  }
-
-  static Future<void> saveAdminToken(String token) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(tokenKey, token);
-    print('DEBUG: Saved admin token');
-  }
-
-  static Future<String?> _getAdminToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(tokenKey);
-  }
-
-  static Future<Map<String, String>> _getAdminHeaders() async {
-    final token = await _getAdminToken();
+  Future<Map<String, String>> _getAdminHeaders() async {
+    final token = await tokenStorage.getToken();
     if (token == null || token.isEmpty) {
       throw Exception('Kein Admin-Token verfügbar');
     }
@@ -427,228 +745,39 @@ class AdminService {
     };
   }
 
-  static String _handleError(http.Response response) {
+  ApiResponse<T> _handleErrorResponse<T>(http.Response response) {
     try {
       final body = jsonDecode(response.body);
-      return body['message'] ?? 'Unbekannter Fehler';
+      final message =
+          body['message'] ?? _getDefaultErrorMessage(response.statusCode);
+      return ApiResponse.error(message, statusCode: response.statusCode);
     } catch (e) {
-      switch (response.statusCode) {
-        case 400:
-          return 'Ungültige Anfrage';
-        case 401:
-          return 'Nicht authentifiziert';
-        case 403:
-          return 'Keine Berechtigung';
-        case 404:
-          return 'Nicht gefunden';
-        case 500:
-          return 'Server-Fehler';
-        default:
-          return 'Fehler ${response.statusCode}';
-      }
+      return ApiResponse.error(
+        _getDefaultErrorMessage(response.statusCode),
+        statusCode: response.statusCode,
+      );
     }
   }
 
-  static Future<bool> isAdminAuthenticated() async {
-    try {
-      final token = await _getAdminToken();
-      if (token == null || token.isEmpty) {
-        return false;
-      }
-
-      // Test token validity by making a request
-      final response = await http.get(
-        Uri.parse('$baseUrl/users'),
-        headers: await _getAdminHeaders(),
-      );
-
-      return response.statusCode == 200;
-    } catch (e) {
-      print('DEBUG: Auth check error: $e');
-      return false;
-    }
-  }
-
-  // Helper method to check if a token exists
-  static Future<bool> hasAdminToken() async {
-    final token = await _getAdminToken();
-    return token != null && token.isNotEmpty;
-  }
-
-  // Helper method to extract cookie from response headers
-  static String? _extractCookie(Map<String, String> headers) {
-    return headers['set-cookie'];
-  }
-
-  // Add this helper method to verify token format
-  static bool _isValidTokenFormat(String token) {
-    try {
-      // Basic JWT format check: should be three dot-separated base64 strings
-      final parts = token.split('.');
-      if (parts.length != 3) return false;
-
-      // Check if the middle part (payload) can be decoded
-      final payload = utf8.decode(
-        base64Url.decode(base64Url.normalize(parts[1])),
-      );
-      final payloadJson = jsonDecode(payload);
-
-      // Verify essential claims
-      return payloadJson['sub'] != null && // Subject (usually user email)
-          payloadJson['exp'] != null; // Expiration time
-    } catch (e) {
-      print('DEBUG: Token format validation failed: $e');
-      return false;
-    }
-  }
-
-  // Add this before creating an item
-  static Future<bool> verifyAdminAccess() async {
-    try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/users'),
-        headers: await _getAdminHeaders(),
-      );
-
-      print('DEBUG: Admin access check status: ${response.statusCode}');
-      return response.statusCode == 200;
-    } catch (e) {
-      print('DEBUG: Admin access check failed: $e');
-      return false;
-    }
-  }
-
-  static Future<bool> verifyTokenClaims(String token) async {
-    // Basic token format check only
-    return token.split('.').length == 3;
-  }
-
-  static Future<bool> canCreateItems() async {
-    try {
-      // If they're logged in as admin, they can create items
-      final token = await _getAdminToken();
-      return token != null;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  // Add this method to your AdminService class
-  static Future<String?> uploadItemImage(int itemId, File imageFile) async {
-    try {
-      final token = await _getAdminToken();
-      if (token == null) {
-        throw Exception('Not authenticated');
-      }
-
-      // FIXED URL - remove duplicate "/api"
-      var uploadUrl = Uri.parse('$baseUrl/items/$itemId/image');
-
-      // Create a multipart request
-      var request = http.MultipartRequest('POST', uploadUrl);
-
-      // Add authorization
-      request.headers['Authorization'] = 'Bearer $token';
-
-      // Get file extension from path
-      final String filename = imageFile.path.split('/').last;
-
-      // Add the file to the request
-      request.files.add(
-        await http.MultipartFile.fromPath(
-          'image',
-          imageFile.path,
-          filename: filename,
-        ),
-      );
-
-      // Send the request and get the response
-      var streamedResponse = await request.send();
-      var response = await http.Response.fromStream(streamedResponse);
-
-      if (response.statusCode == 200) {
-        final jsonData = json.decode(response.body);
-        return jsonData['imageUrl'];
-      } else {
-        print(
-          'Image upload failed: ${response.statusCode} ${response.reasonPhrase}',
-        );
-        print('Response body: ${response.body}');
-        throw Exception('Failed to upload image: ${response.reasonPhrase}');
-      }
-    } catch (e) {
-      print('Error uploading image: $e');
-      return null;
-    }
-  }
-
-  /// Uploads an image for an item using bytes data and returns the image URL
-  ///
-  /// [itemId] - The ID of the item to attach the image to
-  /// [imageBytes] - The image bytes to upload
-  /// [filename] - The filename for the uploaded image
-  static Future<String?> uploadItemImageBytes(
-    int itemId,
-    Uint8List imageBytes,
-    String filename,
-  ) async {
-    try {
-      final token = await _getAdminToken();
-      if (token == null) {
-        throw Exception('Not authenticated');
-      }
-
-      print(
-        'DEBUG: Starting image upload for item $itemId with filename: $filename',
-      );
-
-      // FIXED URL - remove duplicate "/api"
-      var uploadUrl = Uri.parse('$baseUrl/items/$itemId/image');
-      print('DEBUG: Upload URL: $uploadUrl');
-
-      // Create a multipart request
-      var request = http.MultipartRequest('POST', uploadUrl);
-
-      // Add authorization
-      request.headers['Authorization'] = 'Bearer $token';
-      print('DEBUG: Using auth header: ${request.headers['Authorization']}');
-
-      // Add the file bytes to the request
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'image',
-          imageBytes,
-          filename: filename,
-          contentType: _getContentType(filename), // Add content type
-        ),
-      );
-
-      // Send the request and get the response
-      print('DEBUG: Sending request...');
-      var streamedResponse = await request.send();
-      print('DEBUG: Got response status: ${streamedResponse.statusCode}');
-      var response = await http.Response.fromStream(streamedResponse);
-
-      print('DEBUG: Image upload response: ${response.statusCode}');
-      print('DEBUG: Response body: ${response.body}');
-
-      if (response.statusCode == 200) {
-        final jsonData = json.decode(response.body);
-        return jsonData['imageUrl'];
-      } else {
-        print('DEBUG: Image upload failed with status ${response.statusCode}');
-        throw Exception(
-          'Failed to upload image: ${response.statusCode} ${response.reasonPhrase}',
-        );
-      }
-    } catch (e) {
-      print('ERROR: Image upload failed: $e');
-      return null;
+  String _getDefaultErrorMessage(int statusCode) {
+    switch (statusCode) {
+      case 400:
+        return 'Ungültige Anfrage';
+      case 401:
+        return 'Nicht authentifiziert';
+      case 403:
+        return 'Keine Berechtigung';
+      case 404:
+        return 'Nicht gefunden';
+      case 500:
+        return 'Server-Fehler';
+      default:
+        return 'Fehler $statusCode';
     }
   }
 
   /// Helper method to determine content type based on file extension
-  static MediaType _getContentType(String filename) {
+  MediaType _getContentType(String filename) {
     final extension = filename.toLowerCase().split('.').last;
     switch (extension) {
       case 'jpg':

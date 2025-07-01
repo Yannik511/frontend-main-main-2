@@ -5,19 +5,115 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:kreisel_frontend/models/user_model.dart';
 import 'package:kreisel_frontend/models/item_model.dart';
 import 'package:kreisel_frontend/models/rental_model.dart';
-import 'package:kreisel_frontend/models/review_model.dart'; // Add this import
+import 'package:kreisel_frontend/models/review_model.dart';
 import 'dart:async';
 
-class ApiService {
-  static const String baseUrl = 'http://localhost:8080/api';
-  static User? currentUser;
-  static String? _authToken;
-  static String? _cookieHeader;
+// ===== INTERFACES FÜR TESTABILITY =====
+
+abstract class HttpClientInterface {
+  Future<http.Response> get(Uri url, {Map<String, String>? headers});
+  Future<http.Response> post(Uri url, {Map<String, String>? headers, Object? body});
+  Future<http.Response> put(Uri url, {Map<String, String>? headers, Object? body});
+  Future<http.Response> delete(Uri url, {Map<String, String>? headers});
+}
+
+abstract class TokenStorageInterface {
+  Future<void> saveToken(String token);
+  Future<void> saveCookie(String cookie);
+  Future<String?> getToken();
+  Future<String?> getCookie();
+  Future<void> removeTokens();
+}
+
+// ===== DEFAULT IMPLEMENTIERUNGEN =====
+
+class RealHttpClient implements HttpClientInterface {
+  final http.Client _client = http.Client();
+
+  @override
+  Future<http.Response> get(Uri url, {Map<String, String>? headers}) {
+    return _client.get(url, headers: headers);
+  }
+
+  @override
+  Future<http.Response> post(Uri url, {Map<String, String>? headers, Object? body}) {
+    return _client.post(url, headers: headers, body: body);
+  }
+
+  @override
+  Future<http.Response> put(Uri url, {Map<String, String>? headers, Object? body}) {
+    return _client.put(url, headers: headers, body: body);
+  }
+
+  @override
+  Future<http.Response> delete(Uri url, {Map<String, String>? headers}) {
+    return _client.delete(url, headers: headers);
+  }
+}
+
+class SharedPreferencesTokenStorage implements TokenStorageInterface {
+  String? _authToken;
+  String? _cookieHeader;
+
+  @override
+  Future<void> saveToken(String token) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('jwt_token', token);
+    _authToken = token;
+  }
+
+  @override
+  Future<void> saveCookie(String cookie) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('jwt_cookie', cookie);
+    _cookieHeader = cookie;
+  }
+
+  @override
+  Future<String?> getToken() async {
+    if (_authToken != null) return _authToken;
+    final prefs = await SharedPreferences.getInstance();
+    _authToken = prefs.getString('jwt_token');
+    return _authToken;
+  }
+
+  @override
+  Future<String?> getCookie() async {
+    if (_cookieHeader != null) return _cookieHeader;
+    final prefs = await SharedPreferences.getInstance();
+    _cookieHeader = prefs.getString('jwt_cookie');
+    return _cookieHeader;
+  }
+
+  @override
+  Future<void> removeTokens() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('jwt_token');
+    await prefs.remove('jwt_cookie');
+    _authToken = null;
+    _cookieHeader = null;
+  }
+}
+
+// ===== CORE BUSINESS LOGIC (TESTABLE) =====
+
+class ApiServiceCore {
+  final HttpClientInterface httpClient;
+  final TokenStorageInterface tokenStorage;
+  final String baseUrl;
+
+  User? currentUser;
+
+  ApiServiceCore({
+    required this.httpClient,
+    required this.tokenStorage,
+    this.baseUrl = 'http://localhost:8080/api',
+  });
 
   // Verbesserte Token-Verwaltung
-  static Future<void> initialize() async {
+  Future<void> initialize() async {
     try {
-      final token = await _getToken();
+      final token = await tokenStorage.getToken();
       if (token != null) {
         final user = await getCurrentUser();
         currentUser = user;
@@ -25,12 +121,12 @@ class ApiService {
       }
     } catch (e) {
       print('DEBUG: Init error: $e');
-      await _removeToken();
+      await tokenStorage.removeTokens();
     }
   }
 
-  static Future<Map<String, String>> _getHeaders() async {
-    final token = await _getToken();
+  Future<Map<String, String>> _getHeaders() async {
+    final token = await tokenStorage.getToken();
     return {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
@@ -38,46 +134,10 @@ class ApiService {
     };
   }
 
-  // Token Management
-  static Future<void> _saveToken(String token) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('jwt_token', token);
-    _authToken = token;
-  }
-
-  static Future<void> _saveCookie(String cookie) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('jwt_cookie', cookie);
-    _cookieHeader = cookie;
-  }
-
-  static Future<String?> _getToken() async {
-    if (_authToken != null) return _authToken;
-    final prefs = await SharedPreferences.getInstance();
-    _authToken = prefs.getString('jwt_token');
-    return _authToken;
-  }
-
-  static Future<String?> _getCookie() async {
-    if (_cookieHeader != null) return _cookieHeader;
-    final prefs = await SharedPreferences.getInstance();
-    _cookieHeader = prefs.getString('jwt_cookie');
-    return _cookieHeader;
-  }
-
-  static Future<void> _removeToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('jwt_token');
-    await prefs.remove('jwt_cookie');
-    _authToken = null;
-    _cookieHeader = null;
-    currentUser = null;
-  }
-
   // Verbesserte _getAuthHeaders mit mehr Logging
-  static Future<Map<String, String>> _getAuthHeaders() async {
-    final token = await _getToken();
-    final cookie = await _getCookie();
+  Future<Map<String, String>> _getAuthHeaders() async {
+    final token = await tokenStorage.getToken();
+    final cookie = await tokenStorage.getCookie();
 
     final headers = <String, String>{
       'Content-Type': 'application/json',
@@ -101,7 +161,7 @@ class ApiService {
     return headers;
   }
 
-  static String? _extractTokenFromCookie(String? setCookieHeader) {
+  String? _extractTokenFromCookie(String? setCookieHeader) {
     if (setCookieHeader == null) return null;
 
     // Parse Set-Cookie header to extract JWT token
@@ -116,8 +176,8 @@ class ApiService {
     return null;
   }
 
-  static Future<User> login(String email, String password) async {
-    final response = await http.post(
+  Future<User> login(String email, String password) async {
+    final response = await httpClient.post(
       Uri.parse('$baseUrl/auth/login'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'email': email, 'password': password}),
@@ -137,18 +197,18 @@ class ApiService {
 
         // Extract token from response body
         if (responseData['token'] != null) {
-          await _saveToken(responseData['token']);
+          await tokenStorage.saveToken(responseData['token']);
         }
 
         // Extract cookie from headers
         final setCookieHeader = response.headers['set-cookie'];
         if (setCookieHeader != null) {
-          await _saveCookie(setCookieHeader);
+          await tokenStorage.saveCookie(setCookieHeader);
           // Also try to extract token from cookie if not in body
           if (responseData['token'] == null) {
             final cookieToken = _extractTokenFromCookie(setCookieHeader);
             if (cookieToken != null) {
-              await _saveToken(cookieToken);
+              await tokenStorage.saveToken(cookieToken);
             }
           }
         }
@@ -180,12 +240,8 @@ class ApiService {
     }
   }
 
-  static Future<User> register(
-    String fullName,
-    String email,
-    String password,
-  ) async {
-    final response = await http.post(
+  Future<User> register(String fullName, String email, String password) async {
+    final response = await httpClient.post(
       Uri.parse('$baseUrl/auth/register'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -213,18 +269,18 @@ class ApiService {
 
         // Extract token from response body
         if (responseData['token'] != null) {
-          await _saveToken(responseData['token']);
+          await tokenStorage.saveToken(responseData['token']);
         }
 
         // Extract cookie from headers
         final setCookieHeader = response.headers['set-cookie'];
         if (setCookieHeader != null) {
-          await _saveCookie(setCookieHeader);
+          await tokenStorage.saveCookie(setCookieHeader);
           // Also try to extract token from cookie if not in body
           if (responseData['token'] == null) {
             final cookieToken = _extractTokenFromCookie(setCookieHeader);
             if (cookieToken != null) {
-              await _saveToken(cookieToken);
+              await tokenStorage.saveToken(cookieToken);
             }
           }
         }
@@ -256,10 +312,10 @@ class ApiService {
     }
   }
 
-  static Future<void> logout() async {
+  Future<void> logout() async {
     try {
       final headers = await _getAuthHeaders();
-      final response = await http.post(
+      final response = await httpClient.post(
         Uri.parse('$baseUrl/auth/logout'),
         headers: headers,
       );
@@ -269,12 +325,13 @@ class ApiService {
     } catch (e) {
       print('Logout Error: $e');
     } finally {
-      await _removeToken();
+      await tokenStorage.removeTokens();
+      currentUser = null;
     }
   }
 
   // User Methods
-  static Future<User> getCurrentUser() async {
+  Future<User> getCurrentUser() async {
     try {
       print('DEBUG: === Getting current user data ===');
 
@@ -283,14 +340,14 @@ class ApiService {
         return currentUser!;
       }
 
-      final token = await _getToken();
-      final cookie = await _getCookie();
+      final token = await tokenStorage.getToken();
+      final cookie = await tokenStorage.getCookie();
 
       if (token == null && cookie == null) {
         throw Exception('Nicht angemeldet');
       }
 
-      final response = await http
+      final response = await httpClient
           .get(Uri.parse('$baseUrl/users/me'), headers: await _getAuthHeaders())
           .timeout(Duration(seconds: 10));
 
@@ -301,7 +358,7 @@ class ApiService {
       }
 
       if (response.statusCode == 401 || response.statusCode == 403) {
-        await _removeToken();
+        await tokenStorage.removeTokens();
         throw Exception('Session abgelaufen');
       }
 
@@ -313,13 +370,13 @@ class ApiService {
     }
   }
 
-  static Future<User> updateUserName(String newName) async {
+  Future<User> updateUserName(String newName) async {
     if (currentUser == null) {
       throw Exception('Nicht angemeldet');
     }
 
     try {
-      final response = await http.put(
+      final response = await httpClient.put(
         Uri.parse('$baseUrl/users/me/name'),
         headers: {
           ...await _getAuthHeaders(),
@@ -348,12 +405,9 @@ class ApiService {
     }
   }
 
-  static Future<void> updatePassword(
-    String currentPassword,
-    String newPassword,
-  ) async {
+  Future<void> updatePassword(String currentPassword, String newPassword) async {
     final headers = await _getAuthHeaders();
-    final response = await http.put(
+    final response = await httpClient.put(
       Uri.parse('$baseUrl/users/me/password'),
       headers: headers,
       body: jsonEncode({
@@ -379,7 +433,7 @@ class ApiService {
   }
 
   // Item Methods
-  static Future<List<Item>> getItems({required String location}) async {
+  Future<List<Item>> getItems({required String location}) async {
     try {
       print('DEBUG: Fetching items from API for location: $location');
 
@@ -387,7 +441,7 @@ class ApiService {
       final standardizedLocation = location.toUpperCase().trim();
       print('DEBUG: Standardized location: $standardizedLocation');
 
-      final response = await http.get(
+      final response = await httpClient.get(
         Uri.parse('$baseUrl/items?location=$standardizedLocation'),
         headers: await _getAuthHeaders(),
       );
@@ -410,9 +464,9 @@ class ApiService {
     }
   }
 
-  static Future<Item> getItemById(int itemId) async {
+  Future<Item> getItemById(int itemId) async {
     final headers = await _getAuthHeaders();
-    final response = await http.get(
+    final response = await httpClient.get(
       Uri.parse('$baseUrl/items/$itemId'),
       headers: headers,
     );
@@ -432,7 +486,7 @@ class ApiService {
   }
 
   // Rental Methods
-  static Future<List<Rental>> getUserActiveRentals() async {
+  Future<List<Rental>> getUserActiveRentals() async {
     try {
       print('DEBUG: Fetching active rentals');
 
@@ -447,7 +501,7 @@ class ApiService {
       print('DEBUG: Request headers: $headers');
 
       // Changed endpoint to match backend controller
-      final response = await http.get(
+      final response = await httpClient.get(
         Uri.parse('$baseUrl/rentals/user/active'),
         headers: headers,
       );
@@ -458,7 +512,7 @@ class ApiService {
 
       if (response.statusCode == 401 || response.statusCode == 403) {
         print('DEBUG: Authentication error - clearing token');
-        await _removeToken();
+        await tokenStorage.removeTokens();
         throw Exception('Bitte erneut anmelden');
       }
 
@@ -490,7 +544,7 @@ class ApiService {
     }
   }
 
-  static Future<List<Rental>> getUserRentalHistory() async {
+  Future<List<Rental>> getUserRentalHistory() async {
     try {
       print('DEBUG: Fetching rental history');
 
@@ -500,7 +554,7 @@ class ApiService {
 
       final headers = await _getAuthHeaders();
       // Changed endpoint to match backend controller
-      final response = await http.get(
+      final response = await httpClient.get(
         Uri.parse('$baseUrl/rentals/user/history'),
         headers: headers,
       );
@@ -509,7 +563,7 @@ class ApiService {
       print('DEBUG: Get Rental History Body: ${response.body}');
 
       if (response.statusCode == 401 || response.statusCode == 403) {
-        await _removeToken();
+        await tokenStorage.removeTokens();
         throw Exception('Bitte erneut anmelden');
       }
 
@@ -528,7 +582,7 @@ class ApiService {
   }
 
   // Helper method to parse rentals consistently
-  static List<Rental> _parseRentals(List<dynamic> rentalsJson) {
+  List<Rental> _parseRentals(List<dynamic> rentalsJson) {
     return rentalsJson.map((json) {
       try {
         print('DEBUG: Parsing rental JSON: $json');
@@ -564,7 +618,7 @@ class ApiService {
     }).toList();
   }
 
-  static Future<void> rentItem({
+  Future<void> rentItem({
     required int itemId,
     required DateTime endDate,
   }) async {
@@ -588,7 +642,7 @@ class ApiService {
 
     print('DEBUG: Request body: $requestBody');
 
-    final response = await http.post(
+    final response = await httpClient.post(
       Uri.parse('$baseUrl/rentals/rent'),
       headers: headers,
       body: jsonEncode(requestBody),
@@ -600,13 +654,13 @@ class ApiService {
     if (response.statusCode == 403) {
       // Spezielle Behandlung für 403 - könnte Token-Problem sein
       print('DEBUG: 403 Forbidden - checking auth state');
-      await _removeToken();
+      await tokenStorage.removeTokens();
       throw Exception('Keine Berechtigung. Bitte neu anmelden.');
     }
 
     if (response.statusCode == 401) {
       // Token abgelaufen
-      await _removeToken();
+      await tokenStorage.removeTokens();
       throw Exception('Session abgelaufen. Bitte neu anmelden.');
     }
 
@@ -615,12 +669,12 @@ class ApiService {
     }
   }
 
-  static Future<void> extendRental({
+  Future<void> extendRental({
     required int rentalId,
     required DateTime newEndDate,
   }) async {
     final headers = await _getAuthHeaders();
-    final response = await http.post(
+    final response = await httpClient.post(
       Uri.parse('$baseUrl/rentals/$rentalId/extend'),
       headers: headers,
       body: jsonEncode({'newEndDate': newEndDate.toIso8601String()}),
@@ -634,9 +688,9 @@ class ApiService {
     }
   }
 
-  static Future<void> returnRental(int rentalId) async {
+  Future<void> returnRental(int rentalId) async {
     try {
-      final response = await http.post(
+      final response = await httpClient.post(
         Uri.parse('$baseUrl/rentals/$rentalId/return'),
         headers: await _getAuthHeaders(),
       );
@@ -645,7 +699,7 @@ class ApiService {
 
       if (response.statusCode != 200) {
         if (response.statusCode == 401 || response.statusCode == 403) {
-          await _removeToken();
+          await tokenStorage.removeTokens();
           throw Exception('Bitte erneut anmelden');
         }
         throw Exception('Fehler beim Zurückgeben');
@@ -657,10 +711,7 @@ class ApiService {
   }
 
   /// Converts a relative image URL to a full URL
-  ///
-  /// This method ensures image URLs work properly regardless of how they're stored
-  /// (relative or absolute paths)
-  static String getFullImageUrl(String? imageUrl) {
+  String getFullImageUrl(String? imageUrl) {
     if (imageUrl == null || imageUrl.isEmpty) {
       return '';
     }
@@ -686,7 +737,7 @@ class ApiService {
   }
 
   // Verbesserte Fehlerbehandlung
-  static Exception _handleError(http.Response response) {
+  Exception _handleError(http.Response response) {
     try {
       final body = jsonDecode(response.body);
       final message = body['message'] ?? 'Unknown error';
@@ -701,35 +752,10 @@ class ApiService {
     }
   }
 
-  // Neue Hilfsmethode für Token-Refresh
-  static Future<bool> _refreshToken() async {
-    try {
-      final oldToken = await _getToken();
-      if (oldToken == null) return false;
-
-      final response = await http.post(
-        Uri.parse('$baseUrl/auth/refresh'),
-        headers: {'Authorization': 'Bearer $oldToken'},
-      );
-
-      if (response.statusCode == 200) {
-        final newToken = response.headers['authorization'];
-        if (newToken != null) {
-          await _saveToken(newToken);
-          return true;
-        }
-      }
-      return false;
-    } catch (e) {
-      print('DEBUG: Token refresh failed: $e');
-      return false;
-    }
-  }
-
   // ===== REVIEW SERVICE METHODS =====
 
   /// Creates a review for a completed rental
-  static Future<Review> createReview({
+  Future<Review> createReview({
     required int rentalId,
     required int rating,
     String? comment,
@@ -745,7 +771,7 @@ class ApiService {
 
       print('DEBUG: Creating review with data: $body');
 
-      final response = await http.post(
+      final response = await httpClient.post(
         Uri.parse('$baseUrl/reviews'),
         headers: headers,
         body: jsonEncode(body),
@@ -766,7 +792,7 @@ class ApiService {
       }
 
       if (response.statusCode == 401 || response.statusCode == 403) {
-        await _removeToken();
+        await tokenStorage.removeTokens();
         throw Exception('Bitte erneut anmelden');
       }
 
@@ -778,12 +804,11 @@ class ApiService {
   }
 
   /// Get reviews for a specific item
-  // In ApiService.getReviewsForItem method
-  static Future<List<Review>> getReviewsForItem(int itemId) async {
+  Future<List<Review>> getReviewsForItem(int itemId) async {
     try {
       final headers = await _getAuthHeaders();
 
-      final response = await http.get(
+      final response = await httpClient.get(
         Uri.parse('$baseUrl/reviews/item/$itemId'),
         headers: headers,
       );
@@ -851,11 +876,11 @@ class ApiService {
   }
 
   /// Checks if a user has already reviewed a specific rental
-  static Future<bool> hasUserReviewedRental(int rentalId) async {
+  Future<bool> hasUserReviewedRental(int rentalId) async {
     try {
       final headers = await _getAuthHeaders();
 
-      final response = await http.get(
+      final response = await httpClient.get(
         Uri.parse('$baseUrl/reviews/rental/$rentalId/exists'),
         headers: headers,
       );
@@ -873,11 +898,11 @@ class ApiService {
   }
 
   /// Get the average rating for an item
-  static Future<double> getItemAverageRating(int itemId) async {
+  Future<double> getItemAverageRating(int itemId) async {
     try {
       final headers = await _getAuthHeaders();
 
-      final response = await http.get(
+      final response = await httpClient.get(
         Uri.parse('$baseUrl/reviews/item/$itemId/average'),
         headers: headers,
       );
@@ -895,11 +920,11 @@ class ApiService {
   }
 
   // Review Methods
-  static Future<List<Review>> getItemReviews(int itemId) async {
+  Future<List<Review>> getItemReviews(int itemId) async {
     try {
       print('DEBUG: Fetching reviews for item $itemId');
 
-      final response = await http.get(
+      final response = await httpClient.get(
         Uri.parse('$baseUrl/reviews/item/$itemId'),
         headers: await _getAuthHeaders(),
       );
@@ -942,23 +967,142 @@ class ApiService {
   }
 }
 
-// Helper class for auth state management
+// ===== BACKWARD COMPATIBLE STATIC API (ORIGINAL INTERFACE) =====
+
+class ApiService {
+  static const String baseUrl = 'http://localhost:8080/api';
+  static User? currentUser;
+
+  // Private core instance - default implementation
+  static ApiServiceCore _core = ApiServiceCore(
+    httpClient: RealHttpClient(),
+    tokenStorage: SharedPreferencesTokenStorage(),
+  );
+
+  // ===== TESTABILITY INJECTION POINT =====
+  /// Allows injecting dependencies for testing
+  /// Call this method in tests to make ApiService testable
+  static void configure({
+    required HttpClientInterface httpClient,
+    required TokenStorageInterface tokenStorage,
+    String? baseUrl,
+  }) {
+    _core = ApiServiceCore(
+      httpClient: httpClient,
+      tokenStorage: tokenStorage,
+      baseUrl: baseUrl ?? ApiService.baseUrl,
+    );
+  }
+
+  /// Resets to default configuration
+  static void resetToDefault() {
+    _core = ApiServiceCore(
+      httpClient: RealHttpClient(),
+      tokenStorage: SharedPreferencesTokenStorage(),
+    );
+  }
+
+  // ===== ORIGINAL STATIC API (100% BACKWARD COMPATIBLE) =====
+
+  static Future<void> initialize() async {
+    await _core.initialize();
+    currentUser = _core.currentUser;
+  }
+
+  static Future<User> login(String email, String password) async {
+    final user = await _core.login(email, password);
+    currentUser = user;
+    return user;
+  }
+
+  static Future<User> register(String fullName, String email, String password) async {
+    final user = await _core.register(fullName, email, password);
+    currentUser = user;
+    return user;
+  }
+
+  static Future<void> logout() async {
+    await _core.logout();
+    currentUser = null;
+  }
+
+  static Future<User> getCurrentUser() async {
+    final user = await _core.getCurrentUser();
+    currentUser = user;
+    return user;
+  }
+
+  static Future<User> updateUserName(String newName) async {
+    final user = await _core.updateUserName(newName);
+    currentUser = user;
+    return user;
+  }
+
+  static Future<void> updatePassword(String currentPassword, String newPassword) async {
+    await _core.updatePassword(currentPassword, newPassword);
+  }
+
+  static Future<List<Item>> getItems({required String location}) async {
+    return await _core.getItems(location: location);
+  }
+
+  static Future<Item> getItemById(int itemId) async {
+    return await _core.getItemById(itemId);
+  }
+
+  static Future<List<Rental>> getUserActiveRentals() async {
+    return await _core.getUserActiveRentals();
+  }
+
+  static Future<List<Rental>> getUserRentalHistory() async {
+    return await _core.getUserRentalHistory();
+  }
+
+  static Future<void> rentItem({required int itemId, required DateTime endDate}) async {
+    await _core.rentItem(itemId: itemId, endDate: endDate);
+  }
+
+  static Future<void> extendRental({required int rentalId, required DateTime newEndDate}) async {
+    await _core.extendRental(rentalId: rentalId, newEndDate: newEndDate);
+  }
+
+  static Future<void> returnRental(int rentalId) async {
+    await _core.returnRental(rentalId);
+  }
+
+  static String getFullImageUrl(String? imageUrl) {
+    return _core.getFullImageUrl(imageUrl);
+  }
+
+  static Future<Review> createReview({required int rentalId, required int rating, String? comment}) async {
+    return await _core.createReview(rentalId: rentalId, rating: rating, comment: comment);
+  }
+
+  static Future<List<Review>> getReviewsForItem(int itemId) async {
+    return await _core.getReviewsForItem(itemId);
+  }
+
+  static Future<bool> hasUserReviewedRental(int rentalId) async {
+    return await _core.hasUserReviewedRental(rentalId);
+  }
+
+  static Future<double> getItemAverageRating(int itemId) async {
+    return await _core.getItemAverageRating(itemId);
+  }
+
+  static Future<List<Review>> getItemReviews(int itemId) async {
+    return await _core.getItemReviews(itemId);
+  }
+}
+
+// ===== HELPER CLASS FOR AUTH STATE MANAGEMENT (BACKWARD COMPATIBLE) =====
+
 class AuthStateManager {
   static final ValueNotifier<User?> currentUser = ValueNotifier(null);
 
   static Future<void> initialize() async {
-    final token = await ApiService._getToken();
-    final cookie = await ApiService._getCookie();
-
-    if (token != null || cookie != null) {
-      try {
-        currentUser.value = await ApiService.getCurrentUser();
-      } catch (e) {
-        print('Initialize Auth Error: $e');
-        await ApiService._removeToken();
-        currentUser.value = null;
-      }
-    }
+    await ApiService.initialize();
+    currentUser.value = ApiService.currentUser;
   }
 
   static Future<void> login(String email, String password) async {
@@ -970,11 +1114,7 @@ class AuthStateManager {
     }
   }
 
-  static Future<void> register(
-    String fullName,
-    String email,
-    String password,
-  ) async {
+  static Future<void> register(String fullName, String email, String password) async {
     try {
       currentUser.value = await ApiService.register(fullName, email, password);
     } catch (e) {
@@ -990,7 +1130,6 @@ class AuthStateManager {
     } catch (e) {
       print('Logout Auth Error: $e');
       // Even if logout fails, clear local data
-      await ApiService._removeToken();
       currentUser.value = null;
     }
   }
