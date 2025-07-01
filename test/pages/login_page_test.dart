@@ -33,6 +33,7 @@ void main() {
   }
 
   // Helper to create minimal test widget
+  // ignore: unused_element
   Widget createMinimalTestWidget() {
     return MaterialApp(
       home: LoginPage(),

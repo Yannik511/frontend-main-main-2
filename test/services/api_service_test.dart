@@ -369,6 +369,7 @@ void main() {
   await mockTokenStorage.saveToken('rental_token');
   
   // Setup User über eine echte Login-Simulation
+  // ignore: unused_local_variable
   final testUser = User(
     userId: 123,
     email: 'test@hm.edu',

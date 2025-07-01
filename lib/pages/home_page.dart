@@ -506,6 +506,7 @@ class _HomePageState extends State<HomePage> {
                         child: AnimatedContainer(
                           duration: Duration(milliseconds: 200),
                           transform:
+                              // ignore: dead_code
                               Matrix4.identity()..scale(isHovered ? 1.05 : 1.0),
                           width: double.infinity,
                           child: CupertinoButton(

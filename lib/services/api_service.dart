@@ -125,6 +125,7 @@ class ApiServiceCore {
     }
   }
 
+  // ignore: unused_element
   Future<Map<String, String>> _getHeaders() async {
     final token = await tokenStorage.getToken();
     return {

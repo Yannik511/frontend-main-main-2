@@ -20,6 +20,7 @@ class MockApiService extends Mock {
 void main() {
   group('MyAccountPage Tests', () {
     late User testUser;
+    // ignore: unused_local_variable
     late User updatedUser;
 
     setUpAll(() {
@@ -404,6 +405,7 @@ testWidgets('should have correct form structure with name field', (WidgetTester 
 
   // Find the password button specifically (not the header)
   // We know from debug that it's a CupertinoButton with a Row containing the text
+  // ignore: unused_local_variable
   final passwordButton = find.byWidgetPredicate(
     (widget) => widget is CupertinoButton && 
     widget.child is Row &&
@@ -1030,6 +1032,7 @@ testWidgets('should maintain widget integrity under various interactions', (Widg
         final child = widget.child;
         if (child is Row) {
           // Check if any Text widget in the Row contains 'Name aktualisieren'
+          // ignore: unnecessary_cast
           return (child as Row).children.any((rowChild) =>
             rowChild is Text && rowChild.data == 'Name aktualisieren');
         } else if (child is Text) {

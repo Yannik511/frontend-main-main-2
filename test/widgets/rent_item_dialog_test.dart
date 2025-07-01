@@ -1,4 +1,4 @@
-import 'dart:convert';
+//import 'dart:convert';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -224,6 +224,7 @@ void main() {
     testWidgets('displays item information correctly', (
       WidgetTester tester,
     ) async {
+      // ignore: unused_local_variable
       bool rentCallbackCalled = false;
 
       await tester.pumpWidget(
@@ -306,6 +307,7 @@ void main() {
     testWidgets('unauthorized rental shows login error', (
       WidgetTester tester,
     ) async {
+      // ignore: unused_local_variable
       bool rentCallbackCalled = false;
 
       // Set up mock response for unauthorized rental

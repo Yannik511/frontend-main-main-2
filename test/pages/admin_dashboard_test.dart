@@ -129,8 +129,8 @@ class TestAdminService implements AdminServiceInterface {
       description: item.description,
       brand: item.brand,
       imageUrl: item.imageUrl,
-      averageRating: item.averageRating ?? 0.0,
-      reviewCount: item.reviewCount ?? 0,
+      averageRating: item.averageRating,
+      reviewCount: item.reviewCount,
       location: item.location,
       gender: item.gender,
       category: item.category,
@@ -155,8 +155,8 @@ class TestAdminService implements AdminServiceInterface {
       description: item.description,
       brand: item.brand,
       imageUrl: item.imageUrl,
-      averageRating: item.averageRating ?? 0.0,
-      reviewCount: item.reviewCount ?? 0,
+      averageRating: item.averageRating,
+      reviewCount: item.reviewCount,
       location: item.location,
       gender: item.gender,
       category: item.category,
@@ -1290,10 +1290,15 @@ void main() {
   });
 }
 
+// ignore: unused_element
 bool _logoutCalled = false;
+// ignore: unused_element
 Item? _createdItem;
+// ignore: unused_element
 Item? _updatedItem;
+// ignore: unused_element
 int? _deletedItemId;
+// ignore: unused_element
 String? _uploadedImageUrl;
 
 // Setup-methods for tests

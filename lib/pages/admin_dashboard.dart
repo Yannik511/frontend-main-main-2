@@ -161,6 +161,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   List<Rental> _rentals = [];
   List<User> _users = [];
   final _searchController = TextEditingController();
+  // ignore: unused_field
   bool _canCreateItems = false;
 
   @override
@@ -521,6 +522,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
+  // ignore: unused_element
   String _formatStatus(String status) {
     switch (status.toUpperCase()) {
       case 'ACTIVE':
@@ -534,6 +536,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     }
   }
 
+  // ignore: unused_element
   String _formatDate(DateTime date) {
     return '${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}';
   }
